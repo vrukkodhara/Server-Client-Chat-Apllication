@@ -42,9 +42,33 @@ void clientHandler(int clientSocket) {
     }
 }
 
+void clientThreadHandler(int serverSocket) {
+    int newSocket;
+    struct sockaddr_in clientAddr;
+    socklen_t addrSize;
+    
+    while (true) {
+        newSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &addrSize);
+
+        if (newSocket < 0) {
+            cerr << "Error: Accept failed" << endl;
+            continue;
+        }
+
+        lock_guard<mutex> guard(clientMutex);
+        clients.push_back(newSocket);
+
+        cout << "Client " << newSocket << " is connected" << endl;
+
+        thread newHandler(clientHandler, newSocket);
+        newHandler.detach();  // Detach each client handler thread
+    }
+}
+
 int main() {
-    int serverSocket, newSocket;
-    struct sockaddr_in serverAddr, clientAddr;
+    int serverSocket;
+    struct sockaddr_in serverAddr;
+    struct sockaddr_in clientAddr; // Declare clientAddr here
     socklen_t addrSize;
 
     serverSocket = socket(AF_INET, SOCK_STREAM, 0);
@@ -54,8 +78,8 @@ int main() {
     }
 
     serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("172.17.0.2"); // Replace with the server IP
-    serverAddr.sin_port = htons(54000);
+    serverAddr.sin_addr.s_addr = INADDR_ANY; // Use INADDR_ANY to bind to any available IP address
+    serverAddr.sin_port = htons(54000); // Specify the port you want to use
 
     if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
         cerr << "Error: Bind failed" << endl;
@@ -70,22 +94,8 @@ int main() {
     addrSize = sizeof(clientAddr);
     cout << "Server started running" << endl;
 
-    while (true) {
-        newSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &addrSize);
-
-        if (newSocket < 0) {
-            cerr << "Error: Accept failed" << endl;
-            continue;  // Move to the next iteration to continue accepting connections
-        }
-
-        lock_guard<mutex> guard(clientMutex);
-        clients.push_back(newSocket);
-
-        cout << "Client " << newSocket << " is connected" << endl;
-
-        thread clientThread(clientHandler, newSocket);
-        clientThread.detach();
-    }
+    // Create and manage multiple client handling threads
+    clientThreadHandler(serverSocket);
 
     return 0;
 }
