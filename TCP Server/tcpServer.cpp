@@ -1,91 +1,81 @@
 #include <iostream>
-#include <vector>
-#include <thread>
-#include <mutex>
-#include <algorithm>
-#include <string>
-#include <sys/types.h>
+#include <cstring>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
+#include <thread>
+#include <vector>
+#include <algorithm>
 
 using namespace std;
 
-vector<int> clients;
-mutex clientMutex;
-
-void clientHandler(int clientSocket) {
-    char clientMessage[1024] = {0};
-    while (true) {
-        int valread = read(clientSocket, clientMessage, 1024);
-
-        if (valread <= 0) {
-            close(clientSocket);
-
-            lock_guard<mutex> guard(clientMutex);
-            clients.erase(remove(clients.begin(), clients.end(), clientSocket), clients.end());
+void InteractWithClient(int clientSocket, vector<int>& clients) {
+    //send/recv client
+    cout << "client connected " << endl;
+    char buffer[1024];
+    while (1) {
+        int bytesrecvd = recv(clientSocket, buffer, sizeof(buffer), 0);
+        if (bytesrecvd <= 0) {
+            cout << "Client disconnected" << endl;
             break;
         }
+        string message(buffer, bytesrecvd);
+        cout << "message from client : " << message << endl;
 
-        string broadcastMessage = "Client " + to_string(clientSocket) + ": " + clientMessage;
-
-        // Broadcast message to all clients
-        lock_guard<mutex> guard(clientMutex);
-        for (int client : clients) {
+        for (auto& client : clients) {
             if (client != clientSocket) {
-                send(client, broadcastMessage.c_str(), broadcastMessage.size(), 0);
+                send(client, message.c_str(), message.length(), 0);
             }
         }
-
-        cout << "Client " << clientSocket << " : " << clientMessage << endl;
     }
+    auto it = find(clients.begin(), clients.end(), clientSocket);
+    if (it != clients.end()) {
+        clients.erase(it);
+    }
+    close(clientSocket);
 }
 
 int main() {
-    int serverSocket, newSocket;
-    struct sockaddr_in serverAddr, clientAddr;
-    socklen_t addrSize;
+    cout << "server program" << endl;
 
-    serverSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (serverSocket == -1) {
-        cerr << "Error: Socket creation failed" << endl;
-        return -1;
+    int listenSocket = socket(AF_INET, SOCK_STREAM, 0);
+    if (listenSocket < 0) {
+        cout << "Failed to create socket" << endl;
+        return 1;
     }
 
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_addr.s_addr = inet_addr("172.17.0.2"); // Replace with the server IP
-    serverAddr.sin_port = htons(54000);
+    //address structure
+    sockaddr_in servaddr;
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(9090);
+    servaddr.sin_addr.s_addr = INADDR_ANY;
 
-    if (bind(serverSocket, (struct sockaddr*)&serverAddr, sizeof(serverAddr)) < 0) {
-        cerr << "Error: Bind failed" << endl;
-        return -1;
+    if (bind(listenSocket, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
+        cout << "Failed to bind socket" << endl;
+        close(listenSocket);
+        return 1;
     }
 
-    if (listen(serverSocket, 5) < 0) {
-        cerr << "Error: Listen failed" << endl;
-        return -1;
+    if (listen(listenSocket, SOMAXCONN) < 0) {
+        cout << "Failed to listen to client" << endl;
+        close(listenSocket);
+        return 1;
     }
 
-    addrSize = sizeof(clientAddr);
-    cout << "Server started running" << endl;
-
-    while (true) {
-        newSocket = accept(serverSocket, (struct sockaddr*)&clientAddr, &addrSize);
-
-        if (newSocket < 0) {
-            cerr << "Error: Accept failed" << endl;
-            continue;  // Move to the next iteration to continue accepting connections
+    cout << "Server started running " << endl;
+    vector<int> clients;
+    while (1) {
+        int clientSocket = accept(listenSocket, nullptr, nullptr);
+        if (clientSocket < 0) {
+            cout << "Invalid client socket " << endl;
         }
-
-        lock_guard<mutex> guard(clientMutex);
-        clients.push_back(newSocket);
-
-        cout << "Client " << newSocket << " is connected" << endl;
-
-        thread clientThread(clientHandler, newSocket);
-        clientThread.detach();
+        clients.push_back(clientSocket);
+        thread t1(InteractWithClient, clientSocket, ref(clients));
+        t1.detach();
     }
+
+    close(listenSocket);
 
     return 0;
 }
