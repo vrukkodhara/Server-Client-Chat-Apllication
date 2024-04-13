@@ -1,54 +1,76 @@
 #include <iostream>
+#include <cstring>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <unistd.h>
-#include <string>
+#include <thread>
 
 using namespace std;
 
-int main() {
-    int clientSocket;
-    struct sockaddr_in serverAddr;
-
-    clientSocket = socket(AF_INET, SOCK_STREAM, 0);
-    if (clientSocket == -1) {
-        cerr << "Error: Socket creation failed" << endl;
-        return -1;
-    }
-
-    serverAddr.sin_family = AF_INET;
-    serverAddr.sin_port = htons(54000);
-    serverAddr.sin_addr.s_addr = inet_addr("172.17.0.2"); // Replace with the server IP
-
-    if (connect(clientSocket, (struct sockaddr *)&serverAddr, sizeof(serverAddr)) < 0) {
-        cerr << "Error: Connection failed" << endl;
-        return -1;
-    }
-
-    cout << "Connected to server" << endl;
-    
-    char serverMessage[1024] = {0};
-    while (true) {
-        string message;
-        cout << "Enter message: ";
+void SendMessages(int s) {
+    cout << "Name your client : " << endl;
+    string name;
+    getline(cin, name);
+    string message;
+    while (1) {
         getline(cin, message);
-
-        if (send(clientSocket, message.c_str(), message.size(), 0) < 0) {
-            cerr << "Error: Send failed" << endl;
-            continue;  // Move to the next iteration to allow re-sending of the message
+        string msg = "( " + name + " ): " + message;
+        int bytessent = send(s, msg.c_str(), msg.length(), 0);
+        if (bytessent < 0) {
+            cout << "error sending message " << endl;
+            break;
         }
-
-        int valread = read(clientSocket, serverMessage, 1024);
-        if (valread < 0) {
-            cerr << "Error: Read failed" << endl;
-        }
-        else {
-            cout << serverMessage << endl;
+        if (message == "Q" || message == "q" || message == "quit" || message == "exit") {
+            cout << name << " Stopped" << endl;
+            break;
         }
     }
+    close(s);
+}
 
-    close(clientSocket);
+void ReceiveMessage(int s) {
+    char buffer[1024];
+    int recvlength;
+    string msg = "";
+    while (1) {
+        recvlength = recv(s, buffer, sizeof(buffer), 0);
+        if (recvlength <= 0) {
+            cout << "disconnected from the server" << endl;
+            break;
+        } else {
+            msg = string(buffer, recvlength);
+            cout << msg << endl;
+        }
+    }
+}
 
+int main() {
+    int s;
+    s = socket(AF_INET, SOCK_STREAM, 0);
+    if (s < 0) {
+        cout << "invalid socket created " << endl;
+        return 1;
+    }
+
+    int port = 9090;
+    string serveraddress = "172.17.0.2";
+    sockaddr_in servaddr;
+    servaddr.sin_family = AF_INET;
+    servaddr.sin_port = htons(port);
+    inet_pton(AF_INET, serveraddress.c_str(), &(servaddr.sin_addr));
+
+    if (connect(s, (struct sockaddr*)&servaddr, sizeof(servaddr)) < 0) {
+        cout << "Unable to connect to server" << endl;
+        close(s);
+        return 1;
+    }
+    cout << "Connected to server " << endl;
+
+    thread senderthread(SendMessages, s);
+    thread receiver(ReceiveMessage, s);
+
+    senderthread.join();
+    receiver.join();
     return 0;
 }
